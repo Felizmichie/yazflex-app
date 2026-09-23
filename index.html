@@ -478,6 +478,36 @@
             document.getElementById('endDate').value = todayStr;
         }
 
+        /* --- 直近の記録日を取得（過去方向で最後に記録された日） --- */
+        function getLatestTakenOrRestDate() {
+            const todayStr = getTodayStr();
+            const keys = Object.keys(appData.records).filter(k => k <= todayStr).sort();
+            if (keys.length === 0) return null;
+            return new Date(keys[keys.length - 1]);
+        }
+
+        /* --- 連続服用日数の計算修正 --- */
+        function calculateStreak() {
+            const latestDate = getLatestTakenOrRestDate();
+            if (!latestDate) return 0;
+
+            let streak = 0;
+            let date = new Date(latestDate);
+
+            while (true) {
+                const dateStr = formatDate(date);
+                const status = appData.records[dateStr];
+
+                if (status === 'taken' || status === 'taken_bleed') {
+                    streak++;
+                    date.setDate(date.getDate() - 1);
+                } else {
+                    break;
+                }
+            }
+            return streak;
+        }
+
         /* --- 23時 リマインド通知処理 --- */
         function requestNotificationPermission() {
             if (!("Notification" in window)) {
@@ -502,7 +532,6 @@
             const todayStr = getTodayStr();
             const status = appData.records[todayStr];
 
-            // 23時以降かつ、本日の服薬（taken / taken_bleed）が記録されていない場合
             const isNotTakenYet = !(status === 'taken' || status === 'taken_bleed');
             const notNotifiedTodayYet = appData.lastNotifiedDate !== todayStr;
 
@@ -519,7 +548,6 @@
         }
 
         function scheduleNightCheck() {
-            // アプリ起動・常駐時に1分周期で時間判定
             setInterval(checkTimeAndNotify, 60000);
         }
 
@@ -559,34 +587,6 @@
             };
             reader.readAsText(file);
             event.target.value = '';
-        }
-
-        function getLatestRecordDate() {
-            const keys = Object.keys(appData.records).sort();
-            if (keys.length === 0) return new Date();
-            
-            const latestStr = keys[keys.length - 1];
-            const todayStr = getTodayStr();
-            
-            return (latestStr > todayStr) ? new Date(latestStr) : new Date();
-        }
-
-        function calculateStreak(baseDate = getLatestRecordDate()) {
-            let streak = 0;
-            let date = new Date(baseDate);
-
-            while (true) {
-                const dateStr = formatDate(date);
-                const status = appData.records[dateStr];
-
-                if (status === 'taken' || status === 'taken_bleed') {
-                    streak++;
-                    date.setDate(date.getDate() - 1);
-                } else {
-                    break;
-                }
-            }
-            return streak;
         }
 
         function applyBatchRecord(type) {
@@ -673,7 +673,7 @@
         }
 
         function checkAndApply120DaysRule(targetDate) {
-            const streak = calculateStreak(targetDate);
+            const streak = calculateStreak();
             if (streak === 120) {
                 alert('120日連続服用を達成しました！明日から4日間の自動休薬スケジュールをセットします。');
                 const tomorrow = new Date(targetDate);
@@ -719,14 +719,14 @@
             const dayCountDisplay = document.getElementById('dayCountDisplay');
             const subInfoDisplay = document.getElementById('subInfoDisplay');
 
-            const latestDate = getLatestRecordDate();
-            const latestStr = formatDate(latestDate);
+            const latestDate = getLatestTakenOrRestDate();
+            const latestStr = latestDate ? formatDate(latestDate) : today;
             const latestStatus = appData.records[latestStr];
 
             const isTakenToday = appData.records[today] === 'taken' || appData.records[today] === 'taken_bleed';
             const isBleedToday = appData.records[today] === 'taken_bleed';
 
-            const currentStreak = calculateStreak(latestDate);
+            const currentStreak = calculateStreak();
 
             if (latestStatus === 'resting') {
                 appData.mode = 'resting';
@@ -766,7 +766,8 @@
                 let restDays = 1;
                 if (appData.restStartDay) {
                     const start = new Date(appData.restStartDay);
-                    const diffTime = Math.abs(latestDate - start);
+                    const now = new Date();
+                    const diffTime = Math.max(0, now - start);
                     restDays = Math.min(4, Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1);
                 }
 
@@ -812,9 +813,9 @@
             }
 
             let target120DateStr = null;
-            const latestDate = getLatestRecordDate();
-            const currentStreak = calculateStreak(latestDate);
-            if (appData.mode === 'taking' && currentStreak > 0) {
+            const latestDate = getLatestTakenOrRestDate();
+            const currentStreak = calculateStreak();
+            if (appData.mode === 'taking' && currentStreak > 0 && latestDate) {
                 const targetDate = new Date(latestDate);
                 targetDate.setDate(targetDate.getDate() + (120 - currentStreak));
                 if (targetDate.getMonth() === month && targetDate.getFullYear() === year) {
